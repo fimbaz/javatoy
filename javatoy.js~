@@ -1,0 +1,8 @@
+function getByteArray(filename)
+{
+    var request = new XMLHttpRequest();
+    request.overrideMimeType('text/plain; charset=x-user-defined');
+    request.open("GET",filename,false); //request is synchronous, i.e. blocking.
+    request.send();
+    return request.response;
+}
