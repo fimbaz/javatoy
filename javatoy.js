@@ -339,6 +339,7 @@ function loadAttributeArea(bytes,constant_pool)
 
 var invokespecial = 0xB7;
 var invokevirtual = 0xB6;
+var getstatic     = 0xB2;
 var _return       = 0xB1;
 var aload_0       = 0x2A;
 var ldc           = 0x12;
@@ -352,7 +353,10 @@ instructions[ldc] = function(jvm,pool,code,frame)
 	frame.push(constant.bytes);
     }
     else if(constant.type == "CONSTANT_String_info"){
-	//String is not fully implemented yet! 03/24/12
+	stringClass.methods["_pushStaticString"](pool,index,frame)
+	//String is not fully implemented yet! 03/25/12
+    }else{
+	throw "invalid ldc operand " + constant;
     }
     return NO_RETURN;
 }
@@ -363,10 +367,17 @@ instructions[_return] = function(jvm,pool,code,frame)
 instructions[getstatic] = function(jvm,pool,code,frame)
 {
     var operand = code.readInt16();
-    var owning_class = pool[pool[pool[operand].class_name]].bytes;
-    var field_name  = pool[pool[pool[operand].field_name]].bytes;
+    var owning_class = pool[pool[pool[operand].class_index].name_index].bytes
+    var field_name  = pool[pool[pool[operand].name_and_type_index].name_index].bytes;
     var field = jvm.classes[owning_class].static_fields[field_name];
     frame.push(field);
+
+    return NO_RETURN;
+}
+instructions[invokespecial] = function(jvm,pool,code,frame)
+{
+    var instruction = instructions[invokevirtual]
+    return instruction(jvm,pool,code,frame); //I *hope* this works...
 }
 instructions[aload_0] = function(jvm,pool,code,frame)
 {
@@ -375,21 +386,25 @@ instructions[aload_0] = function(jvm,pool,code,frame)
 }
 instructions[invokevirtual] = function(jvm,pool,code,frame){
     var operand = code.readInt16();
-    var method_name = pool[pool[pool[operand].class_index].name_index].bytes;
-    var reference = frame.pop();
+    var class_name = pool[pool[pool[operand].class_index].name_index].bytes;
+    var method_name = pool[pool[pool[operand].name_and_type_index].name_index].bytes;
 
     var new_frame = [];
     new_frame.locals = [];
+    var args_format = jvm.classes[class_name].methods[method_name].method_descriptor //dicey-- needs testing!
 
-    var arg_count = jvm[method_name].method_descriptor.length //dicey-- needs testing!
-    for(var i=0;i<arg_count;i++){
-	if((arg.type == "long" || arg.type == "double") && arg.array_dimension == 0){
-	    new_frame.locals.push(frame.pop())  // longs and doubles occupy two local variables.
+    for(var i=0;i<args_format.length;i++){
+	if((args_format[i].type == "long" || args_format[i].type == "double") && args_format[i].array_dimension == 0){
+	    new_frame.locals.push(frame.pop());
 	}
-	new_frame.locals.push(frame.pop())
+	new_frame.locals.push(frame.pop());
     }
-    var returned_value = jvm.invoke(reference.class_name,reference.instance,method_name,new_frame);
-    frame.push(returned_value);
+    var reference = frame.pop();
+    new_frame.locals.push(reference);
+    new_frame.locals.reverse();
+    var returned_value = jvm.invoke(reference.class_name,method_name,new_frame);
+    if(returned_value != undefined)
+	frame.push(returned_value);
     return NO_RETURN;
 }
 
@@ -407,25 +422,23 @@ var jvm = {
 	    var method_name		= constant_pool[attr.methods[i].name_index].bytes;
 	    var raw_method_descriptor	= constant_pool[attr.methods[i].descriptor_index].bytes;
 	    method.method_descriptor    = parseMethodDescriptor(raw_method_descriptor);
-	    method.code			= attr.methods[i].code;
+	    method.code			= attr.methods[i].code.code;
 	    a_class.methods[method_name]= method;
 	}
 	
-	var class_name = constant_pool[constant_pool[attr.this_class].name_index];
+	var class_name = constant_pool[constant_pool[attr.this_class].name_index].bytes;
 	this.classes[class_name] = a_class;
 	this.classes[class_name].this_class = class_name;
 	this.classes[class_name].super_class = constant_pool[constant_pool[attr.super_class].name_index].bytes;
 	this.classes[class_name].access_flags = attr.access_flags;
 	this.classes[class_name].static_fields = {}; //fields are created when class is initialized.
-
-	this.invoke(class_name,null,"<init>",null);
     },
     loadNativeClass:function(the_class)
     {
 	var class_name = the_class.class_name;
 	this.classes[class_name] = the_class;
     },
-    invoke:function(class_name,instance,method_name,frame)
+    invoke:function(class_name,method_name,frame)
     {
 	var the_class = this.classes[class_name];
 	if(the_class.is_native){
@@ -437,34 +450,162 @@ var jvm = {
 
 	var status = NO_RETURN;
 	while(status == NO_RETURN){
-	    status = instructions[the_method.code.readByte()](this,the_class.pool,the_method.code,frame);
+	    var instruction = instructions[the_method.code.readByte()]
+	    status = instruction(this,the_class.pool,the_method.code,frame);
 	}
 	
     }
 }
     
 var objectClass = { 
+    is_native:true,
     class_name:"java/lang/Object",
-    instances:[],
-    static_fields[],
-    init:(){
+    methods:{},
+    instances:Array(),
+    static_fields:Array(),
+    _init:function()
+    {
 	this.methods["<init>"] = function(jvm,pool,code,frame)
 	{
 	    //check if static fields are initialized-- if not, initialize them.
-	    instances.push(this.initialize_instance_state())
 	    return;
+	}
+	this.methods["<init>"].method_descriptor = []; //()V
+	this.methods["new"] = function(jvm,pool,code,frame){
+	    var new_instance = {class_name:"java/lang/Object",instance:objectClass.instances.length};
+	    objectClass.instances.push(new_instance);
+	    return new_instance;
 	}
     }
 }
-
+objectClass._init();
 
   
 var  stringClass = {
-    class_name:"String",
+    strings:{},
+    methods:{},
+    is_native:true,
+    _init:function(){
+	//must be declared in a method because of special character constraints
+	/*
+	this.methods["new"] = function(jvm,pool,code,frame)
+	{
+	    var new_instance = {class_name:"java/lang/String",instance:stringClass.instances.length}
+	    stringClass.instances.push(new_instance)
+	};
+	*///blowing my mind a bit here, gonna keep it simple.
+	this.methods["_pushStaticString"] = function(pool,index,frame)
+	//methods beginning with '_' are called only by the runtime itself,and may be all wonky and stupid.
+	{
+	    var the_string = pool[pool[index].string_index].bytes;
+	    if(stringClass.strings[the_string] != undefined){
+		frame.push(stringClass.strings[the_string]);
+	    }else{
+		var new_string_ref = {class_name:"java/lang/String",
+				      instance:stringClass.instances.length,
+				      value:the_string};
+		stringClass.strings[the_string] = new_string_ref;
+		stringClass.instances.push(new_string_ref);
+		frame.push(new_string_ref);
+	    }
+	    
+	};
+/*
+	this.methods.["<init>"] = function (jvm,pool,code,frame)
+	{
+	    var string_ref = frame.pop();
+	    if(strings[string_ref.instance] != undefined){
+		var old_string_ref = stringClass.instances[stringClass.strings[string_ref.instance]]
+		frame.push(old_string_ref);
+	    }
+	    else{
+		var new_string_ref = {class_name:"java/lang/String",instance:stringClass.instances.length}
+		stringClass.instances.push();
+		stringClass.strings[new_string_ref.instance] = true;
+		frame.push(new_string_ref);
+	    }
+	    return;
+	};
+*/
+    },
+    class_name:"java/lang/String",
     instances: [],
     static_fields:[],
     
     methods:{},
 
+}
+stringClass._init()
 
+
+var systemClass = {
+    is_native:true,
+    static_fields:Array(),
+    class_name:"java/lang/System",
+    methods:{},
+    _init:function()
+    {
+	this.methods["new"] = function(jvm,pool,code,frame)
+	{
+	    throw "java/lang/System cannot be instantiated!";
+	}
+	this.methods["<init>"] = function(jvm,pool,code,frame)
+	{
+	    throw "java/lang/System does not need initialization-- <init> should never be called!"
+	}
+	this.methods["println"] = function(jvm,pool,code,frame)
+	{
+	    var string_ref = frame.pop();
+	    var string = stringClass.instances[string_ref.instance];
+	}
+	this.static_fields["out"] = {class_name:"java/io/PrintStream",instance:0}; //meaningless for our purposes, since only one output sink exists.
+    },
+    
+}
+systemClass._init();
+
+var printClass = {
+    is_native:true,
+    static_fields:Array(),
+    class_name:"java/io/PrintStream",
+    methods:{},
+    _init:function()
+    {
+	this.methods["new"] = function(jvm,pool,code,frame)
+	{
+	    throw "java/io/PrintStream cannot be instantiated!";
+	}
+	this.methods["<init>"] = function(jvm,pool,code,frame)
+	{
+	    throw "java/io/PrintStream does not need initialization-- <init> should never be called!"
+	}
+	this.methods["println"] = function(jvm,pool,code,frame)
+	{
+	    var string_ref = frame.locals[1];
+	    alert(string_ref.value);
+	}
+	this.methods["println"].method_descriptor = parseMethodDescriptor("(Ljava/lang/String;)V");
+	this.static_fields["out"] = null; //meaningless for our purposes, since only one output sink exists.
+    },
+    
+}
+printClass._init();
+
+function main()
+{
+    var bytes = getByteArray("HelloWorld.class")
+    var helloworld_pool = loadConstantPool(bytes)
+    var helloworld_attr = loadAttributeArea(bytes,helloworld_pool);
+    jvm.loadClass(helloworld_pool,helloworld_attr);
+    jvm.loadNativeClass(objectClass);
+    jvm.loadNativeClass(stringClass);
+    jvm.loadNativeClass(systemClass);
+    jvm.loadNativeClass(printClass);
+    var frame = [];
+    frame.locals = [];
+    var object_ref = objectClass.methods["new"]();
+    frame.locals.push(object_ref);
+    jvm.invoke("HelloWorld","<init>",frame);
+    frame.locals.push(object_ref); //<init> calls invokespecial, which pops object_ref
+    jvm.invoke("HelloWorld","main",frame);
 }
