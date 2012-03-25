@@ -445,6 +445,7 @@ var jvm = {
     
 var objectClass = { 
     class_name:"java/lang/Object",
+    initialize_instance:function(){},
     instances:[],
     static_fields[],
     init:(){
