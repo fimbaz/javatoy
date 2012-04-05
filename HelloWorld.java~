@@ -1,0 +1,22 @@
+class HelloWorld 
+{
+  private class Testing
+  {
+    private int i = 0;
+    public boolean doStuff()
+    {
+      return true;
+    }
+    
+  }
+  
+  public static void main(String[] args)
+  {
+    System.out.println("Greetings fellow citizens!");
+
+    
+  }
+}
+
+
+  

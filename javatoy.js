@@ -21,7 +21,9 @@ var ACC_ABSTRACT  = 0x400;
 
 function parseMethodDescriptor(d)
 {
-	
+    //this method has undefined behavior for invalid descriptors.
+    //go ahead, write an invalid .class file and watch it blow up--
+    //see if I care!
     var ret = false;
     var array_dimension = 0;
     var args = [];
@@ -226,10 +228,75 @@ function loadConstantPool(bytes)
     return constant_pool;
 }
 
+function parseClassInfo(pool,attr)
+{
+    var methods = {};
+    for(var i=0;i<attr.methods.length;i++){
+	var method_name = pool[attr.methods[i].name_index].bytes;
+	methods[name_index].descriptor = pool[attr.methods[i].descriptor_index].bytes;
+    }
+    var classes = {};
+    for(var i=0;i<constant_pool.length;i++){}
+	switch(pool[i].type){
+	case "CONSTANT_Class_info":
+	    var class_name = pool[pool[i].name_index].bytes;
+	    if(classes[class_name] == undefined){
+		classes[class_name] = {};
+	    }
+	    break;
+	case "CONSTANT_Fieldref_info":
+	    var class_name = pool[pool[pool[i].class_index].class_name].bytes;
+	    var name_and_type = pool[pool[i].name_and_type_index];
+	    var name = pool[name_and_type.name_index].bytes;
+	    var descriptor = pool[name_and_type.descriptor_index].bytes;
+	    if(classes[class_name] == undefined){
+		classes[class_name] = {};
+	    }
+	    if(classes[class_name].fields == undefined){
+		classes[class_name].fields = {};
+	    }
+	    classes[class_name].fields[name] = {};
+	    classes[class_name].fields[name].descriptor = descriptor;
+	    break;
+	    
+	case "CONSTANT_Methodref_info":
+	    var class_name = pool[pool[pool[i].class_index].class_name].bytes;
+	    var name_and_type = pool[pool[i].name_and_type_index];
+	    var name = pool[name_and_type.name_index].bytes;
+	var descriptor = pool[name_and_type.descriptor_index].bytes;
+	    if(classes[class_name] == undefined){
+		classes[class_name] = {};
+	    }
+	    if(classes[class_name].methods == undefined){
+		classes[class_name].methods = {};
+	    }
+	    classes[class_name].methods[name] = {};
+	    classes[class_name].methods[name].descriptor = descriptor;
+	    break;
+	case "CONSTANT_Interfacemethodref_info":
+	    var class_name = pool[pool[pool[i].class_index].class_name].bytes;
+	    var name_and_type = pool[pool[i].name_and_type_index];
+	    var name = pool[name_and_type.name_index].bytes;
+	var descriptor = pool[name_and_type.descriptor_index].bytes;
+	    if(classes[class_name] == undefined){
+		classes[class_name] = {};
+	    }
+	    if(classes[class_name].methods == undefined){
+		classes[class_name].methods = {};
+	    }
+	    classes[class_name].methods[name] = {};
+	    classes[class_name].methods[name].is_interface = true;
+	    classes[class_name].methods[name].descriptor = descriptor;
+	    break;
+	    
+
+    }
+}
+
 function loadAttributeArea(bytes,constant_pool)
 {
     var attribute_area_info = {};
-
+    
     attribute_area_info.access_flags = bytes.readInt16();
     attribute_area_info.this_class   = bytes.readInt16();
     attribute_area_info.super_class  = bytes.readInt16();
@@ -252,7 +319,7 @@ function loadAttributeArea(bytes,constant_pool)
 	    var attribute_size = 0;
 	    var attribute = {};
 	    attribute.attribute_name_index	= bytes.readInt16();
-	    attribute.attribute_length    	= bytes.readInt32(); //size in bytes of the attribute itself.
+	    attribute.attribute_length    	= bytes.readInt32(); //size in bytes of the attribute content itself.
 	    attribute.info			= bytes.readBytes(attribute.attribute_length);
 
 	    attribute.size = attribute.attribute_length + 6;
@@ -286,7 +353,7 @@ function loadAttributeArea(bytes,constant_pool)
 	Code_attribute.code_length		= bytes.readInt32();
 	Code_attribute.code			= bytes.readBytes(Code_attribute.code_length);
 	Code_attribute.exception_table_length	= bytes.readInt16();
-	Code_attribute.exception_table		= loadExceptionTable(bytes,length);
+	Code_attribute.exception_table		= loadExceptionTable(bytes,Code_attribute.exception_table_length);
 	Code_attribute.attributes_count		= bytes.readInt16();
 	Code_attribute.attributes		= loadAttributes(bytes,Code_attribute.attributes_count);
 	return Code_attribute;
@@ -303,6 +370,7 @@ function loadAttributeArea(bytes,constant_pool)
 	field.descriptor_index	= bytes.readInt16();
 	field.attributes_count	= bytes.readInt16();
 	field.attributes        = loadAttributes(bytes,field.attributes_count);
+	fields_so_far++;
 
     }
     attribute_area_info.methods_count = bytes.readInt16(i); 
@@ -310,8 +378,10 @@ function loadAttributeArea(bytes,constant_pool)
     var methods = [];
     while(methods_so_far != attribute_area_info.methods_count){
 	var method = {};
+	
 	method.access_flags	= bytes.readInt16();
 	method.name_index	= bytes.readInt16();
+	method.name             = constant_pool[method.name_index].bytes;
 	method.descriptor_index	= bytes.readInt16();
 	method.attributes_count	= bytes.readInt16();
 	method.attributes       = loadAttributes(bytes,method.attributes_count);
@@ -431,7 +501,7 @@ var jvm = {
 	this.classes[class_name].this_class = class_name;
 	this.classes[class_name].super_class = constant_pool[constant_pool[attr.super_class].name_index].bytes;
 	this.classes[class_name].access_flags = attr.access_flags;
-	this.classes[class_name].static_fields = {}; //fields are created when class is initialized.
+	this.classes[class_name].static_fields = {}; //fields are created when class is initialized with <init>. Eventually.
     },
     loadNativeClass:function(the_class)
     {
@@ -609,3 +679,5 @@ function main()
     frame.locals.push(object_ref); //<init> calls invokespecial, which pops object_ref
     jvm.invoke("HelloWorld","main",frame);
 }
+
+//main()
